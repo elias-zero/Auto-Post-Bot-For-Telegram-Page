@@ -68,9 +68,10 @@ def save_state():
 def load_coupons():
     global coupons
     try:
-        df = pd.read_excel(EXCEL_FILE)
+        # تحديد المحرك openpyxl لقراءة ملفات .xlsx
+        df = pd.read_excel(EXCEL_FILE, engine='openpyxl')
         coupons = df.to_dict('records')
-        log.info(f"✅ تم تحميل {len(coupons)} كوبون من {EXCEL_FILE}")
+        log.info(f"✅ تم تحميل {len(coupons)} كوبونات من {EXCEL_FILE}")
     except Exception as e:
         log.error(f"❌ فشل تحميل {EXCEL_FILE}: {e}")
         exit(1)
