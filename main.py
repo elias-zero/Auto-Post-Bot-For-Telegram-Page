@@ -1,12 +1,12 @@
 import os
 import json
 import logging
-import asyncio
 import pandas as pd
 import requests
 from io import BytesIO
 from flask import Flask
 from telegram import Bot
+from telegram.error import TelegramError
 from apscheduler.schedulers.background import BackgroundScheduler
 from pytz import timezone
 
@@ -25,16 +25,16 @@ if not BOT_TOKEN:
     exit(1)
 
 # ——— ثوابت ضمنية ———
-CHANNEL       = '@discountcoupononline'
-EXCEL_FILE    = 'coupons.xlsx'
-STATE_FILE    = 'state.json'
-TZ            = 'Africa/Algiers'
-PORT          = 8080
+CHANNEL    = '@discountcoupononline'
+EXCEL_FILE = 'coupons.xlsx'
+STATE_FILE = 'state.json'
+TZ         = 'Africa/Algiers'
+PORT       = 8080
 
-# ——— تهيئة بوت تيليجرام ———
+# ——— تهيئة بوت تيليجرام تزامني ———
 try:
     bot = Bot(token=BOT_TOKEN)
-    log.info("✅ تم تهيئة بوت تيليجرام بنجاح")
+    log.info("✅ تم تهيئة بوت تيليجرام (v13.15) بنجاح")
 except Exception as e:
     log.error(f"❌ خطأ في تهيئة بوت تيليجرام: {e}")
     exit(1)
@@ -48,8 +48,7 @@ def load_state():
     if os.path.isfile(STATE_FILE):
         try:
             with open(STATE_FILE, 'r') as f:
-                data = json.load(f)
-                current_index = data.get('current_index', 0)
+                current_index = json.load(f).get('current_index', 0)
             log.info(f"✅ تم تحميل الحالة: current_index={current_index}")
         except Exception as e:
             log.warning(f"⚠️ فشل قراءة {STATE_FILE}, البدء من الصفر: {e}")
@@ -76,7 +75,7 @@ def load_coupons():
         log.error(f"❌ فشل تحميل {EXCEL_FILE}: {e}")
         exit(1)
 
-# ——— دالة نشر كوبون ———
+# ——— دالة نشر كوبون تزامني ———
 def post_coupon():
     global current_index
     log.info(f"🔄 بدء post_coupon (index={current_index})")
@@ -106,12 +105,11 @@ def post_coupon():
         "💎 لمزيد من الكوبونات:\nhttps://www.discountcoupon.online"
     )
 
-    # إرسال الصورة بالرسالة (يعد coroutine في v20+)
+    # إرسال الصورة مع الكابتشن (تزامني)
     try:
-        log.info("🔁 إرسال الصورة إلى تيليجرام...")
-        asyncio.run(bot.send_photo(chat_id=CHANNEL, photo=photo, caption=message))
+        bot.send_photo(chat_id=CHANNEL, photo=photo, caption=message)
         log.info(f"✅ تم نشر كوبون #{current_index + 1}")
-    except Exception as e:
+    except TelegramError as e:
         log.error(f"❌ خطأ أثناء إرسال الرسالة إلى تيليجرام: {e}")
 
     # تحديث الحالة
@@ -122,17 +120,17 @@ def post_coupon():
 load_coupons()
 load_state()
 
-# ——— جدولة APScheduler كل دقيقة عند الثانية 00 بتوقيت الجزائر ———
+# ——— جدولة APScheduler ———
 scheduler = BackgroundScheduler(timezone=timezone(TZ))
 scheduler.add_job(
     post_coupon,
     trigger='cron',
-    minute='*',
-    second=0,
+    minute='*',    # كل دقيقة
+    second=0,      
     id='post_coupon'
 )
 scheduler.start()
-log.info("✅ تم تشغيل المجدول لكل دقيقة بتوقيت Algeria")
+log.info("✅ تم تشغيل المجدول لكل دقيقة بتوقيت الجزائر")
 
 # ——— نشر أول كوبون فورياً لاختبار ———
 post_coupon()
