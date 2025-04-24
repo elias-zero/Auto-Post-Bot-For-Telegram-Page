@@ -31,10 +31,10 @@ STATE_FILE = 'state.json'
 TZ         = 'Africa/Algiers'
 PORT       = 8080
 
-# ——— تهيئة بوت تيليجرام تزامني ———
+# ——— تهيئة بوت تيليجرام ———
 try:
     bot = Bot(token=BOT_TOKEN)
-    log.info("✅ تم تهيئة بوت تيليجرام (v13.15) بنجاح")
+    log.info("✅ تم تهيئة بوت تيليجرام بنجاح")
 except Exception as e:
     log.error(f"❌ خطأ في تهيئة بوت تيليجرام: {e}")
     exit(1)
@@ -84,7 +84,6 @@ def post_coupon():
         return
 
     coupon = coupons[current_index]
-    # تحميل الصورة
     try:
         resp = requests.get(coupon['image'], timeout=10)
         resp.raise_for_status()
@@ -94,7 +93,6 @@ def post_coupon():
         log.error(f"❌ خطأ في تحميل الصورة: {e}")
         return
 
-    # صياغة الرسالة
     message = (
         f"🎉 كوبون {coupon['title']}\n\n"
         f"🔥 {coupon['description']}\n\n"
@@ -105,14 +103,12 @@ def post_coupon():
         "💎 لمزيد من الكوبونات:\nhttps://www.discountcoupon.online"
     )
 
-    # إرسال الصورة مع الكابتشن (تزامني)
     try:
         bot.send_photo(chat_id=CHANNEL, photo=photo, caption=message)
         log.info(f"✅ تم نشر كوبون #{current_index + 1}")
     except TelegramError as e:
         log.error(f"❌ خطأ أثناء إرسال الرسالة إلى تيليجرام: {e}")
 
-    # تحديث الحالة
     current_index = (current_index + 1) % len(coupons)
     save_state()
 
@@ -125,12 +121,12 @@ scheduler = BackgroundScheduler(timezone=timezone(TZ))
 scheduler.add_job(
     post_coupon,
     trigger='cron',
-    minute='*',    # كل دقيقة
-    second=0,      
+    minute='0',    # الدقيقة 00
+    second='0',    # الثانية 00
     id='post_coupon'
 )
 scheduler.start()
-log.info("✅ تم تشغيل المجدول لكل دقيقة بتوقيت الجزائر")
+log.info("✅ تم تشغيل المجدول ليعمل في رأس كل ساعة بتوقيت الجزائر")
 
 # ——— نشر أول كوبون فورياً لاختبار ———
 post_coupon()
