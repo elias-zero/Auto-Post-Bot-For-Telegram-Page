@@ -1,6 +1,7 @@
 pandas
-python-telegram-bot
+python-telegram-bot>=20.0,<23.0
 requests
-schedule
 Flask
+APScheduler
+pytz
 gunicorn
