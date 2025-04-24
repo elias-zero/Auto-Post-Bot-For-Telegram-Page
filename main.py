@@ -5,7 +5,8 @@ import pandas as pd
 import requests
 from io import BytesIO
 from flask import Flask
-from telegram import Bot, TelegramError
+from telegram import Bot
+from telegram.error import TelegramError
 from apscheduler.schedulers.background import BackgroundScheduler
 from pytz import timezone
 
@@ -15,24 +16,32 @@ logging.basicConfig(
     format='[%(asctime)s] %(levelname)s:%(message)s',
     datefmt='%Y-%m-%d %H:%M:%S'
 )
-log = logging.getLogger()
+log = logging.getLogger(__name__)
 
-# ——— متغير بيئي واحد ———
+# ——— متغيّر بيئي واحد ———
 BOT_TOKEN = os.getenv('BOT_TOKEN')
 if not BOT_TOKEN:
-    log.error("❌ BOT_TOKEN غير معرف في البيئة")
+    log.error("❌ BOT_TOKEN غير معرف. الرجاء ضبط المتغيّر البيئي BOT_TOKEN ثم إعادة التشغيل.")
     exit(1)
 
 # ——— ثوابت ضمنية ———
-CHANNEL    = '@discountcoupononline'
-EXCEL_FILE = 'coupons.xlsx'
-STATE_FILE = 'state.json'
-TZ         = 'Africa/Algiers'
+CHANNEL       = '@discountcoupononline'
+EXCEL_FILE    = 'coupons.xlsx'
+STATE_FILE    = 'state.json'
+TZ            = 'Africa/Algiers'
 
-bot = Bot(token=BOT_TOKEN)
+# ——— تهيئة بوت تيليجرام ———
+try:
+    bot = Bot(token=BOT_TOKEN)
+    log.info("✅ تم تهيئة بوت تيليجرام بنجاح")
+except Exception as e:
+    log.error(f"❌ خطأ في تهيئة بوت تيليجرام: {e}")
+    exit(1)
+
 coupons = []
 current_index = 0
 
+# ——— دوال الحالة ———
 def load_state():
     global current_index
     if os.path.isfile(STATE_FILE):
@@ -40,35 +49,46 @@ def load_state():
             with open(STATE_FILE, 'r') as f:
                 data = json.load(f)
                 current_index = data.get('current_index', 0)
-        except Exception:
+            log.info(f"✅ تم تحميل الحالة: current_index={current_index}")
+        except Exception as e:
+            log.warning(f"⚠️ فشل قراءة {STATE_FILE}, البدء من الصفر: {e}")
             current_index = 0
     else:
         save_state()
 
 def save_state():
-    with open(STATE_FILE, 'w') as f:
-        json.dump({'current_index': current_index}, f)
+    try:
+        with open(STATE_FILE, 'w') as f:
+            json.dump({'current_index': current_index}, f)
+        log.info(f"✅ تم حفظ الحالة: current_index={current_index}")
+    except Exception as e:
+        log.error(f"❌ فشل حفظ الحالة: {e}")
 
+# ——— تحميل الكوبونات من الإكسل ———
 def load_coupons():
     global coupons
     try:
         df = pd.read_excel(EXCEL_FILE)
         coupons = df.to_dict('records')
-        log.info(f"✅ تم تحميل {len(coupons)} كوبونات")
+        log.info(f"✅ تم تحميل {len(coupons)} كوبون من {EXCEL_FILE}")
     except Exception as e:
         log.error(f"❌ فشل تحميل {EXCEL_FILE}: {e}")
         exit(1)
 
+# ——— دالة نشر كوبون ———
 def post_coupon():
     global current_index
+    log.info(f"🔄 بدء post_coupon (index={current_index})")
     if not coupons:
-        log.warning("⚠️ لا توجد كوبونات للنشر")
+        log.warning("⚠️ القائمة فارغة، لا يوجد كوبونات للنشر")
         return
 
     coupon = coupons[current_index]
     try:
         resp = requests.get(coupon['image'], timeout=10)
+        resp.raise_for_status()
         photo = BytesIO(resp.content)
+        log.info("✅ تم تحميل الصورة بنجاح")
     except Exception as e:
         log.error(f"❌ خطأ في تحميل الصورة: {e}")
         return
@@ -87,7 +107,7 @@ def post_coupon():
         bot.send_photo(chat_id=CHANNEL, photo=photo, caption=message)
         log.info(f"✅ تم نشر كوبون #{current_index + 1}")
     except TelegramError as e:
-        log.error(f"❌ خطأ أثناء النشر: {e}")
+        log.error(f"❌ خطأ أثناء إرسال الرسالة إلى تيليجرام: {e}")
 
     current_index = (current_index + 1) % len(coupons)
     save_state()
@@ -98,11 +118,17 @@ load_state()
 
 # ——— جدولة APScheduler ———
 scheduler = BackgroundScheduler(timezone=timezone(TZ))
-# ينفّذ كل دقيقة عند الثانية 0 بتوقيت Africa/Algiers
-scheduler.add_job(post_coupon, 'cron', minute='*', second=0, id='post_coupon')
+scheduler.add_job(
+    post_coupon,
+    trigger='cron',
+    minute='*',    # كل دقيقة
+    second=0,      # عند الثانية 00
+    id='post_coupon'
+)
 scheduler.start()
+log.info("✅ تم تشغيل المجدول APScheduler لكل دقيقة بتوقيت Algeria")
 
-# اختياري: نشر أول كوبون فورياً لاختبار
+# ——— نشر أول كوبون فورياً (اختبار) ———
 post_coupon()
 
 # ——— خادم Flask للـ Keep-Alive ———
@@ -113,4 +139,5 @@ def home():
     return "Bot is alive 👍"
 
 if __name__ == '__main__':
+    log.info("🚀 بدء خادم Flask على 0.0.0.0:8080")
     app.run(host='0.0.0.0', port=8080)
