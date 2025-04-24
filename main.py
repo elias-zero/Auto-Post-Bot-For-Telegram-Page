@@ -1,12 +1,12 @@
 import os
 import json
 import logging
+import asyncio
 import pandas as pd
 import requests
 from io import BytesIO
 from flask import Flask
 from telegram import Bot
-from telegram.error import TelegramError
 from apscheduler.schedulers.background import BackgroundScheduler
 from pytz import timezone
 
@@ -29,6 +29,7 @@ CHANNEL       = '@discountcoupononline'
 EXCEL_FILE    = 'coupons.xlsx'
 STATE_FILE    = 'state.json'
 TZ            = 'Africa/Algiers'
+PORT          = 8080
 
 # ——— تهيئة بوت تيليجرام ———
 try:
@@ -68,7 +69,6 @@ def save_state():
 def load_coupons():
     global coupons
     try:
-        # تحديد المحرك openpyxl لقراءة ملفات .xlsx
         df = pd.read_excel(EXCEL_FILE, engine='openpyxl')
         coupons = df.to_dict('records')
         log.info(f"✅ تم تحميل {len(coupons)} كوبونات من {EXCEL_FILE}")
@@ -81,10 +81,11 @@ def post_coupon():
     global current_index
     log.info(f"🔄 بدء post_coupon (index={current_index})")
     if not coupons:
-        log.warning("⚠️ القائمة فارغة، لا يوجد كوبونات للنشر")
+        log.warning("⚠️ لا توجد كوبونات للنشر")
         return
 
     coupon = coupons[current_index]
+    # تحميل الصورة
     try:
         resp = requests.get(coupon['image'], timeout=10)
         resp.raise_for_status()
@@ -94,6 +95,7 @@ def post_coupon():
         log.error(f"❌ خطأ في تحميل الصورة: {e}")
         return
 
+    # صياغة الرسالة
     message = (
         f"🎉 كوبون {coupon['title']}\n\n"
         f"🔥 {coupon['description']}\n\n"
@@ -104,12 +106,15 @@ def post_coupon():
         "💎 لمزيد من الكوبونات:\nhttps://www.discountcoupon.online"
     )
 
+    # إرسال الصورة بالرسالة (يعد coroutine في v20+)
     try:
-        bot.send_photo(chat_id=CHANNEL, photo=photo, caption=message)
+        log.info("🔁 إرسال الصورة إلى تيليجرام...")
+        asyncio.run(bot.send_photo(chat_id=CHANNEL, photo=photo, caption=message))
         log.info(f"✅ تم نشر كوبون #{current_index + 1}")
-    except TelegramError as e:
+    except Exception as e:
         log.error(f"❌ خطأ أثناء إرسال الرسالة إلى تيليجرام: {e}")
 
+    # تحديث الحالة
     current_index = (current_index + 1) % len(coupons)
     save_state()
 
@@ -117,19 +122,19 @@ def post_coupon():
 load_coupons()
 load_state()
 
-# ——— جدولة APScheduler ———
+# ——— جدولة APScheduler كل دقيقة عند الثانية 00 بتوقيت الجزائر ———
 scheduler = BackgroundScheduler(timezone=timezone(TZ))
 scheduler.add_job(
     post_coupon,
     trigger='cron',
-    minute='*',    # كل دقيقة
-    second=0,      # عند الثانية 00
+    minute='*',
+    second=0,
     id='post_coupon'
 )
 scheduler.start()
-log.info("✅ تم تشغيل المجدول APScheduler لكل دقيقة بتوقيت Algeria")
+log.info("✅ تم تشغيل المجدول لكل دقيقة بتوقيت Algeria")
 
-# ——— نشر أول كوبون فورياً (اختبار) ———
+# ——— نشر أول كوبون فورياً لاختبار ———
 post_coupon()
 
 # ——— خادم Flask للـ Keep-Alive ———
@@ -140,5 +145,5 @@ def home():
     return "Bot is alive 👍"
 
 if __name__ == '__main__':
-    log.info("🚀 بدء خادم Flask على 0.0.0.0:8080")
-    app.run(host='0.0.0.0', port=8080)
+    log.info(f"🚀 بدء خادم Flask على 0.0.0.0:{PORT}")
+    app.run(host='0.0.0.0', port=PORT)
