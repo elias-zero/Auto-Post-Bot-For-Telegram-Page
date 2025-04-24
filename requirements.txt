@@ -4,4 +4,6 @@ requests
 Flask
 APScheduler
 pytz
+openpyxl
 gunicorn
+
