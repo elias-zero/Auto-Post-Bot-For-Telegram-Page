@@ -1,0 +1,6 @@
+pandas
+python-telegram-bot
+requests
+schedule
+Flask
+gunicorn
