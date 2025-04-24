@@ -1,23 +1,33 @@
 import os
 import json
-import threading
-import time
-import schedule
+import logging
 import pandas as pd
 import requests
 from io import BytesIO
-from telegram import Bot
-from telegram.error import TelegramError
 from flask import Flask
+from telegram import Bot, TelegramError
+from apscheduler.schedulers.background import BackgroundScheduler
+from pytz import timezone
 
-# ◼️ متغيّر بيئي واحد فقط:
+# ——— إعداد اللوقينج ———
+logging.basicConfig(
+    level=logging.INFO,
+    format='[%(asctime)s] %(levelname)s:%(message)s',
+    datefmt='%Y-%m-%d %H:%M:%S'
+)
+log = logging.getLogger()
+
+# ——— متغير بيئي واحد ———
 BOT_TOKEN = os.getenv('BOT_TOKEN')
+if not BOT_TOKEN:
+    log.error("❌ BOT_TOKEN غير معرف في البيئة")
+    exit(1)
 
-# ◼️ بقية الإعدادات داخل الكود:
-CHANNEL_USERNAME = '@discountcoupononline'
-EXCEL_FILE       = 'coupons.xlsx'
-STATE_FILE       = 'state.json'
-PORT             = 8080
+# ——— ثوابت ضمنية ———
+CHANNEL    = '@discountcoupononline'
+EXCEL_FILE = 'coupons.xlsx'
+STATE_FILE = 'state.json'
+TZ         = 'Africa/Algiers'
 
 bot = Bot(token=BOT_TOKEN)
 coupons = []
@@ -44,22 +54,23 @@ def load_coupons():
     try:
         df = pd.read_excel(EXCEL_FILE)
         coupons = df.to_dict('records')
-        print(f"✅ تم تحميل {len(coupons)} كوبون")
+        log.info(f"✅ تم تحميل {len(coupons)} كوبونات")
     except Exception as e:
-        print(f"❌ فشل تحميل الإكسل: {e}")
+        log.error(f"❌ فشل تحميل {EXCEL_FILE}: {e}")
+        exit(1)
 
 def post_coupon():
     global current_index
     if not coupons:
-        print("⚠️ لا توجد كوبونات للنشر")
+        log.warning("⚠️ لا توجد كوبونات للنشر")
         return
 
     coupon = coupons[current_index]
     try:
-        resp = requests.get(coupon['image'])
+        resp = requests.get(coupon['image'], timeout=10)
         photo = BytesIO(resp.content)
     except Exception as e:
-        print(f"❌ خطأ في تحميل الصورة: {e}")
+        log.error(f"❌ خطأ في تحميل الصورة: {e}")
         return
 
     message = (
@@ -73,30 +84,33 @@ def post_coupon():
     )
 
     try:
-        bot.send_photo(chat_id=CHANNEL_USERNAME, photo=photo, caption=message)
-        print(f"✅ تم نشر كوبون #{current_index + 1}")
+        bot.send_photo(chat_id=CHANNEL, photo=photo, caption=message)
+        log.info(f"✅ تم نشر كوبون #{current_index + 1}")
     except TelegramError as e:
-        print(f"❌ خطأ في النشر: {e}")
+        log.error(f"❌ خطأ أثناء النشر: {e}")
 
     current_index = (current_index + 1) % len(coupons)
     save_state()
 
-# جدولة كل ساعة عند الدقيقة 00
-schedule.every().hour.at(":00").do(post_coupon)
+# ——— التحميل الأولي ———
+load_coupons()
+load_state()
 
-def scheduler_loop():
-    while True:
-        schedule.run_pending()
-        time.sleep(1)
+# ——— جدولة APScheduler ———
+scheduler = BackgroundScheduler(timezone=timezone(TZ))
+# ينفّذ كل دقيقة عند الثانية 0 بتوقيت Africa/Algiers
+scheduler.add_job(post_coupon, 'cron', minute='*', second=0, id='post_coupon')
+scheduler.start()
 
+# اختياري: نشر أول كوبون فورياً لاختبار
+post_coupon()
+
+# ——— خادم Flask للـ Keep-Alive ———
 app = Flask(__name__)
 
 @app.route('/')
 def home():
-    return "Bot is alive"
+    return "Bot is alive 👍"
 
 if __name__ == '__main__':
-    load_coupons()
-    load_state()
-    threading.Thread(target=scheduler_loop, daemon=True).start()
-    app.run(host='0.0.0.0', port=PORT)
+    app.run(host='0.0.0.0', port=8080)
